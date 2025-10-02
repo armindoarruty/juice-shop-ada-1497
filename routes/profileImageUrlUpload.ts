@@ -7,6 +7,9 @@ import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { finished } from 'node:stream/promises'
 import { type Request, type Response, type NextFunction } from 'express'
+import {promises as dns} from 'node:dns'
+import * as net from 'node:net'
+import * as punycode from 'punycode/'
 
 import * as security from '../lib/insecurity'
 import { UserModel } from '../models/user'
@@ -31,12 +34,26 @@ export function profileImageUrlUpload () {
         next(new Error('Invalid image URL provided'))
         return
       }
-      // Only allow trusted protocols (https)
+      // SSRF hardening: Normalize and validate hostname, and resolve to block local/private IPs
+      const normalizedHostname = punycode.toASCII(parsed.hostname.replace(/\.$/, ''))
       if (
         parsed.protocol !== 'https:' ||
-        !ALLOWED_HOSTNAMES.includes(parsed.hostname)
+        !ALLOWED_HOSTNAMES.includes(normalizedHostname)
       ) {
         next(new Error('Image URL must use HTTPS and point to an approved domain'))
+        return
+      }
+      // Check DNS resolution for localhost/private IP
+      try {
+        const addresses = await dns.lookup(normalizedHostname, { all: true, verbatim: true })
+        for (const addr of addresses) {
+          if (isPrivateOrLocalAddress(addr.address)) {
+            next(new Error('Blocked request to private or local IP address'))
+            return
+          }
+        }
+      } catch (e) {
+        next(new Error('Could not resolve provided image URL host'))
         return
       }
 
