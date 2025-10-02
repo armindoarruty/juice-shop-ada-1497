@@ -17,6 +17,29 @@ export function profileImageUrlUpload () {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (req.body.imageUrl !== undefined) {
       const url = req.body.imageUrl
+
+      // SSRF mitigation: Only allow image URLs from trusted domains
+      const ALLOWED_HOSTNAMES = [
+        'images.example.com',
+        'cdn.example.com'
+        // add more trusted image domains if needed
+      ]
+      let parsed
+      try {
+        parsed = new URL(url)
+      } catch (e) {
+        next(new Error('Invalid image URL provided'))
+        return
+      }
+      // Only allow trusted protocols (https)
+      if (
+        parsed.protocol !== 'https:' ||
+        !ALLOWED_HOSTNAMES.includes(parsed.hostname)
+      ) {
+        next(new Error('Image URL must use HTTPS and point to an approved domain'))
+        return
+      }
+
       if (url.match(/(.)*solve\/challenges\/server-side(.)*/) !== null) req.app.locals.abused_ssrf_bug = true
       const loggedInUser = security.authenticatedUsers.get(req.cookies.token)
       if (loggedInUser) {
